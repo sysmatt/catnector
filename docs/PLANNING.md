@@ -99,6 +99,9 @@ need, not speculative):
   which rig the user currently has selected, not just its freq/mode)
 - Report: connect/disconnect status (so the site can show
   connected/disconnected clearly)
+- Push: **display-only follow state** — so the client's "Following X"
+  indicator can be cleared when the follow ends, without the client
+  acquiring any follow logic (§3.3)
 - Report: **rig health, separately from session health** — "site connected,
   rig offline" is a real state (cable pulled, rigctld died, port permission
   denied) and the site must be able to show it rather than drop the spot or
@@ -198,6 +201,19 @@ catnector does — it exists so the UI can say *why* the radio just moved,
 which is the remote-tune trust indicator — a rig that moves on its own
 should always be able to say who moved it. A client that ignores the field
 behaves correctly.
+
+**Plus one display-only state push.** `source` is per-message, so it cannot
+keep §10.4's persistent "Following W1ABC" indicator honest: when a follow
+ends — manual unfollow, or the target un-spotting (§2) — no `set_rig`
+arrives, and an indicator driven only by the last message would go on
+claiming a follow that is over.
+
+So the server also pushes a **display-only follow state** ("following
+W1ABC" / "none"), which catnector *renders and never acts on*. This keeps
+"no follow logic in the client" honestly true — catnector still cannot tell
+a one-shot tune from a follow update, and still has no follow state machine
+— while making the indicator truthful. It must be in protocol v1;
+retrofitting a state channel later is a version bump.
 
 Rough shape:
 
@@ -705,7 +721,10 @@ A radio that retunes itself must be able to say who moved it and why. The
   immediately or cancel. Where the platform has a native idiom for this
   (tray notification, etc.), use it.
 - **Continuous follow updates: applied immediately**, under a *persistent*
-  "Following W1ABC" indicator rather than a per-update countdown.
+  "Following W1ABC" indicator rather than a per-update countdown. That
+  indicator is driven by the display-only follow-state push (§3.3), not by
+  the last `set_rig` — otherwise it keeps claiming a follow after the
+  follow has ended.
 
 The reason for the split: a countdown on every follow update would make
 following feel laggy and broken, and would produce continuous flashing that
