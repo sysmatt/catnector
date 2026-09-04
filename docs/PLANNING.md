@@ -179,8 +179,13 @@ a deliberate choice for this audience, not an oversight.
 ### 4.1 Locations and discoverability
 
 Two files — `sites.ini` and `rigs.ini` — in the platform's standard config
-directory via Qt's `QStandardPaths`, with a `CATNECTOR_CONFIG_DIR`
-environment override.
+directory, with a `CATNECTOR_CONFIG_DIR` environment override.
+
+Qt's `QStandardPaths` was the original intention; implementation used the
+platform conventions directly instead, because several `QStandardPaths`
+locations require a `QCoreApplication` to exist — which would make
+configuration unreadable and untestable outside a running GUI. The resulting
+paths are the ones Qt reports.
 
 **The paths must be discoverable in the UI** — a "reveal config folder"
 button, not a line buried in a README. The entire rationale above is that
@@ -738,7 +743,7 @@ and how catnector would participate in a handoff are all TBD.
 |---|---|---|---|
 | **M0** ✅ | Repo scaffold | **Done.** `src/` layout, pyproject + `uv.lock`, ruff (lint + format), pytest, GitHub Actions across {Linux, Windows} × {3.10, 3.13}, `catnector --version`. Nothing user-visible — it exists so every later milestone lands on green CI. | no |
 | **M1** ✅ | Rig layer, headless | **Done.** `RigBackend` + `NetRigctlBackend`, `RigctldProcess` spawn/supervise on an ephemeral port, peer probe (`\chk_vfo`, `\dump_state`, hamlib floor 4.5), model list and `--dump-caps` parsing. 35 tests against `rigctld -m 1`. No GUI. | no |
-| **M2** | GUI + rig profiles | PySide6 shell, model picker from hamlib's list, caps-generated settings form, `rigs.ini` CRUD, live freq/mode display, reveal-config-folder, serial-permission onboarding. **First milestone worth showing another ham.** | no |
+| **M2** ✅ | GUI + rig profiles | **Done.** PySide6 shell with rig picker, connect/disconnect and live freq/mode readout; caps-generated profile editor; `rigs.ini` CRUD; built-in Hamlib Dummy profile; reveal-config-folder; serial-permission diagnosis. Rig I/O on a `QThread`, never the GUI thread. 64 tests. **First milestone worth showing another ham.** | no |
 | **M3** | Site connection | Token paste → `.well-known` → WSS connect, handshake + capability negotiation, close-code handling incl. the kick modal, `sites.ini` at 0600, status showing session and rig health separately. Built against the reference mock server. | **yes** |
 | **M4** | Telemetry + control | Throttled outbound reports (freq/mode/rig name/status/rig health); inbound `set_rig` with the full §10 safety envelope. **This is the MVP (§11).** | **yes** |
 | **M5** | Packaging | Linux AppImage + Windows `.exe` via Actions, bundled `rigctld` (`--add-binary`), PyPI wheel for `pipx`, install documentation. | no |

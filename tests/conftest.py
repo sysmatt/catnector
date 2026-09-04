@@ -7,9 +7,14 @@ what we believe the protocol to be. It needs no radio, which is the point.
 
 from __future__ import annotations
 
+import os
 import shutil
 
 import pytest
+
+# Qt must be told to run headless before any QApplication exists. Set here
+# rather than in CI so a contributor without a display gets the same result.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catnector.rig import DUMMY_MODEL, NetRigctlBackend, RigctldOptions, RigctldProcess
 

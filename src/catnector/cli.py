@@ -46,10 +46,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         print(version_report())
         return 0
-    print(version_report())
-    print()
-    print("The graphical interface is not built yet (milestone M2).")
-    return 0
+    if args.config_dir:
+        from .paths import config_dir
+
+        print(config_dir())
+        return 0
+
+    from .gui import run
+
+    return run()
 
 
 if __name__ == "__main__":
