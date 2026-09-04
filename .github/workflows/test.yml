@@ -33,6 +33,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # Pulls in the catnector-protocol reference site, which the site-client
+      # tests run against. Without it those tests skip rather than fail.
       - name: Sync dependencies
         run: uv sync --all-groups --python ${{ matrix.python-version }}
 

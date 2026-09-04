@@ -92,3 +92,72 @@ def test_connecting_to_the_dummy_rig_drives_the_display(window, qtbot):
         window._toggle_connection()
     assert window.connect_button.text() == "Connect"
     assert window.frequency_label.text() == "—"
+
+
+@pytest.mark.protocol
+def test_the_window_signs_in_to_a_site_and_shows_who_it_is(qtbot, window, config, mock_site):
+    """Window -> token -> discovery -> handshake -> identity on screen."""
+    from catnector.site import SiteProfile, encode, save_sites
+
+    token = encode(mock_site.host, "gui-token")
+    save_sites(config / "sites.ini", [SiteProfile(name="Reference", token=token)])
+    window.reload_sites()
+    assert window.site_box.count() == 1
+
+    with qtbot.waitSignal(window._site.welcomed, timeout=20000):
+        window._toggle_site()
+
+    assert "K2TTA" in window.identity_label.text()
+    assert mock_site.host in window.identity_label.text()
+    assert "Connected" in window.site_status_label.text()
+    assert window.site_connect_button.text() == "Disconnect"
+
+    window._site.disconnect_from()
+    qtbot.waitUntil(lambda: not window._site.online, timeout=10000)
+    assert window.identity_label.text() == "—"
+
+
+@pytest.mark.protocol
+def test_follow_state_reaches_the_display_and_is_cleared(
+    qtbot, window, config, mock_site, site_post
+):
+    from catnector.site import SiteProfile, encode, save_sites
+
+    save_sites(
+        config / "sites.ini",
+        [SiteProfile(name="Reference", token=encode(mock_site.host, "gui2"))],
+    )
+    window.reload_sites()
+    with qtbot.waitSignal(window._site.welcomed, timeout=20000):
+        window._toggle_site()
+
+    with qtbot.waitSignal(window._site.follow_state_changed, timeout=15000):
+        site_post(mock_site.base, "/mock/follow_state", {"following": "W1ABC"})
+    assert window.following_label.text() == "W1ABC"
+
+    with qtbot.waitSignal(window._site.follow_state_changed, timeout=15000):
+        site_post(mock_site.base, "/mock/follow_state", {"following": None})
+    assert window.following_label.text() == "—"
+    window._site.disconnect_from()
+
+
+def test_a_damaged_token_is_refused_before_it_is_saved(qtbot, window):
+    """The dialog will not enable OK for a token that cannot work."""
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from catnector.gui.token_dialog import TokenDialog
+    from catnector.site import encode
+
+    dialog = TokenDialog(window)
+    qtbot.addWidget(dialog)
+    ok = dialog.buttons.button(QDialogButtonBox.Ok)
+
+    good = encode("example.org", "secret")
+    dialog.token.setPlainText(good[:-2])
+    assert not ok.isEnabled()
+    assert "damaged" in dialog.feedback.text().lower()
+
+    dialog.token.setPlainText(good)
+    assert ok.isEnabled()
+    assert "example.org" in dialog.feedback.text()
+    assert dialog.profile().name == "example.org"

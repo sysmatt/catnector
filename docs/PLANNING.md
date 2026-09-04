@@ -402,8 +402,13 @@ live connection.
 
 ### 8.4 Threading and polling
 
-- **The GUI thread performs no I/O.** One QThread for rig poll/apply, one
-  for the WebSocket client, Qt signals between them. No qasync.
+- **The GUI thread performs no *blocking* I/O.** One QThread for rig
+  poll/apply, Qt signals between it and the UI. No qasync.
+- **The site connection stays on the GUI thread.** Implementation used Qt's
+  `QWebSocket` and `QNetworkAccessManager`, which are event-driven and never
+  block, so a second thread would add cross-thread marshalling for no
+  benefit. The rig layer keeps its own thread because a serial radio
+  genuinely blocks for hundreds of milliseconds; the WebSocket does not.
 - **Poll rate is decoupled from report rate.** A slow CAT rig will not
   reliably answer `get_freq` inside one second; the server-configured
   interval (§6) governs *reports*, not polls. Catnector reports the last
@@ -744,7 +749,7 @@ and how catnector would participate in a handoff are all TBD.
 | **M0** ✅ | Repo scaffold | **Done.** `src/` layout, pyproject + `uv.lock`, ruff (lint + format), pytest, GitHub Actions across {Linux, Windows} × {3.10, 3.13}, `catnector --version`. Nothing user-visible — it exists so every later milestone lands on green CI. | no |
 | **M1** ✅ | Rig layer, headless | **Done.** `RigBackend` + `NetRigctlBackend`, `RigctldProcess` spawn/supervise on an ephemeral port, peer probe (`\chk_vfo`, `\dump_state`, hamlib floor 4.5), model list and `--dump-caps` parsing. 35 tests against `rigctld -m 1`. No GUI. | no |
 | **M2** ✅ | GUI + rig profiles | **Done.** PySide6 shell with rig picker, connect/disconnect and live freq/mode readout; caps-generated profile editor; `rigs.ini` CRUD; built-in Hamlib Dummy profile; reveal-config-folder; serial-permission diagnosis. Rig I/O on a `QThread`, never the GUI thread. 64 tests. **First milestone worth showing another ham.** | no |
-| **M3** | Site connection | Token paste → `.well-known` → WSS connect, handshake + capability negotiation, close-code handling incl. the kick modal, `sites.ini` at 0600, status showing session and rig health separately. Built against the reference mock server. | **yes** |
+| **M3** ✅ | Site connection | **Done.** Token paste → `.well-known` → WSS connect over Qt's `QWebSocket`, `hello`/`welcome`, heartbeat, close-code policy with the kick modal, `req` refusal, display-only `follow_state`, `sites.ini` at 0600. 96 tests, the site ones run against the reference mock site. | **yes** |
 | **M4** | Telemetry + control | Throttled outbound reports (freq/mode/rig name/status/rig health); inbound `set_rig` with the full §10 safety envelope. **This is the MVP (§11).** | **yes** |
 | **M5** | Packaging | Linux AppImage + Windows `.exe` via Actions, bundled `rigctld` (`--add-binary`), PyPI wheel for `pipx`, install documentation. | no |
 

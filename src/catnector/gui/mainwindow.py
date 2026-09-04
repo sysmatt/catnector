@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
-from ..paths import config_dir, ensure_config_dir, rigs_path
+from ..paths import config_dir, ensure_config_dir, rigs_path, sites_path
 from ..profiles import (
     DUMMY_PROFILE_NAME,
     RigProfile,
@@ -32,7 +32,9 @@ from ..profiles import (
     with_unique_name,
 )
 from ..rig import RigHealth, RigState, list_models
+from ..site import Phase, SessionInfo, SiteClient, SiteProfile, load_sites, save_sites
 from .profile_dialog import ProfileDialog
+from .token_dialog import TokenDialog
 from .worker import RigWorker
 
 
@@ -56,6 +58,7 @@ class MainWindow(QMainWindow):
         ensure_config_dir()
 
         self._profiles: list[RigProfile] = []
+        self._sites: list[SiteProfile] = []
         self._models = self._load_models()
 
         self.profile_box = QComboBox()
@@ -63,6 +66,14 @@ class MainWindow(QMainWindow):
         self.edit_button = QPushButton("Edit…")
         self.add_button = QPushButton("Add…")
         self.remove_button = QPushButton("Remove")
+
+        self.site_box = QComboBox()
+        self.site_connect_button = QPushButton("Connect")
+        self.add_site_button = QPushButton("Add…")
+        self.remove_site_button = QPushButton("Remove")
+        self.site_status_label = QLabel()
+        self.identity_label = QLabel("—")
+        self.following_label = QLabel("—")
 
         self.session_label = QLabel()
         self.rig_label = QLabel()
@@ -84,8 +95,13 @@ class MainWindow(QMainWindow):
         self.edit_button.clicked.connect(self._edit_profile)
         self.remove_button.clicked.connect(self._remove_profile)
         self.profile_box.currentIndexChanged.connect(self._profile_selected)
+        self.site_connect_button.clicked.connect(self._toggle_site)
+        self.add_site_button.clicked.connect(self._add_site)
+        self.remove_site_button.clicked.connect(self._remove_site)
+        self.site_box.currentIndexChanged.connect(self._site_selected)
 
         self.reload_profiles()
+        self.reload_sites()
         self._set_status("Not connected", RigHealth.OFFLINE)
 
     # ------------------------------------------------------------- building
@@ -109,6 +125,23 @@ class MainWindow(QMainWindow):
         rig_layout.addLayout(picker)
         rig_layout.addWidget(self.connect_button)
 
+        site_picker = QHBoxLayout()
+        site_picker.addWidget(self.site_box, 1)
+        site_picker.addWidget(self.add_site_button)
+        site_picker.addWidget(self.remove_site_button)
+
+        site_readout = QFormLayout()
+        site_readout.addRow("Signed in as", self.identity_label)
+        site_readout.addRow("Following", self.following_label)
+        site_readout.addRow("Status", self.site_status_label)
+
+        site_box = QGroupBox("Site")
+        site_layout = QVBoxLayout(site_box)
+        site_layout.addLayout(site_picker)
+        site_layout.addWidget(self.site_connect_button)
+        site_layout.addLayout(site_readout)
+        self._site_group = site_box
+
         readout = QFormLayout()
         readout.addRow("Frequency", self.frequency_label)
         readout.addRow("Mode", self.mode_label)
@@ -122,10 +155,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.addWidget(rig_box)
         layout.addWidget(state_box)
+        layout.addWidget(site_box)
         layout.addWidget(self.session_label)
         layout.addStretch(1)
         self.setCentralWidget(central)
-        self.resize(460, 360)
+        self.resize(470, 560)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -160,6 +194,16 @@ class MainWindow(QMainWindow):
         self._worker.state_changed.connect(self._on_state)
         self._worker.failed.connect(self._on_failed)
         self._thread.start()
+
+        # The site connection is event-driven and never blocks, so unlike the
+        # rig it belongs on the GUI thread (docs/PLANNING.md §8.4).
+        self._site = SiteClient(self)
+        self._site.phase_changed.connect(self._on_site_phase)
+        self._site.welcomed.connect(self._on_welcomed)
+        self._site.closed.connect(self._on_site_closed)
+        self._site.failed.connect(self._on_site_failed)
+        self._site.follow_state_changed.connect(self._on_follow_state)
+        self._site.set_rig_received.connect(self._on_set_rig)
 
     # -------------------------------------------------------------- profiles
 
@@ -247,6 +291,7 @@ class MainWindow(QMainWindow):
         self._connect_requested.emit(profile)
 
     def _on_connected(self, peer) -> None:
+        self._site.set_rig_available(True)
         self.connect_button.setEnabled(True)
         self.connect_button.setText("Disconnect")
         self.hamlib_label.setText(
@@ -255,6 +300,7 @@ class MainWindow(QMainWindow):
         self._set_status("Connected", RigHealth.OK)
 
     def _on_disconnected(self, reason: str) -> None:
+        self._site.set_rig_available(False)
         self.connect_button.setEnabled(True)
         self.connect_button.setText("Connect")
         self.frequency_label.setText("—")
@@ -281,6 +327,136 @@ class MainWindow(QMainWindow):
         colour = {RigHealth.OK: "#2e7d32", RigHealth.ERROR: "#c62828"}.get(health, "#757575")
         self.rig_label.setText(text)
         self.rig_label.setStyleSheet(f"color: {colour};")
+
+    # ---------------------------------------------------------------- sites
+
+    @property
+    def current_site(self) -> SiteProfile | None:
+        index = self.site_box.currentIndex()
+        if 0 <= index < len(self._sites):
+            return self._sites[index]
+        return None
+
+    def reload_sites(self) -> None:
+        stored = load_sites(sites_path())
+        self._sites = stored
+        remembered = self.site_box.currentText()
+        self.site_box.blockSignals(True)
+        self.site_box.clear()
+        for site in self._sites:
+            self.site_box.addItem(site.name)
+        index = self.site_box.findText(remembered)
+        self.site_box.setCurrentIndex(max(index, 0))
+        self.site_box.blockSignals(False)
+        self._site_selected()
+
+    def _site_selected(self) -> None:
+        site = self.current_site
+        self.remove_site_button.setEnabled(site is not None)
+        self.site_connect_button.setEnabled(site is not None)
+        if site is not None and not self._site.online:
+            self.site_status_label.setText(f"Not connected to {site.host}")
+
+    def _add_site(self) -> None:
+        dialog = TokenDialog(self)
+        if dialog.exec() != TokenDialog.Accepted:
+            return
+        profile = dialog.profile()
+        self._sites = [s for s in self._sites if s.name != profile.name]
+        self._sites.append(profile)
+        save_sites(sites_path(), self._sites)
+        self.reload_sites()
+        self.site_box.setCurrentText(profile.name)
+
+    def _remove_site(self) -> None:
+        site = self.current_site
+        if site is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Remove site", f"Remove the site '{site.name}' and its token?"
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self._sites.remove(site)
+        save_sites(sites_path(), self._sites)
+        self.reload_sites()
+
+    def _toggle_site(self) -> None:
+        if self._site.phase in (
+            Phase.ONLINE,
+            Phase.CONNECTING,
+            Phase.DISCOVERING,
+            Phase.HANDSHAKING,
+        ):
+            self._site.disconnect_from()
+            return
+        site = self.current_site
+        if site is None:
+            return
+        try:
+            token = site.decoded()
+        except Exception as exc:
+            QMessageBox.warning(self, "Token", str(exc))
+            return
+        self._site.set_rig_snapshot(self._rig_snapshot())
+        self._site.connect_to(token, site_name=site.name)
+
+    def _rig_snapshot(self) -> dict:
+        """The rig block sent in `hello` (SPEC.md §7.1)."""
+        profile = self.current_profile
+        state = self._worker.last_state
+        return {"profile": profile.name if profile else "", "health": state.health.value}
+
+    def _on_site_phase(self, phase: str) -> None:
+        busy = phase in (
+            Phase.DISCOVERING.value,
+            Phase.CONNECTING.value,
+            Phase.HANDSHAKING.value,
+        )
+        self.site_connect_button.setText(
+            "Disconnect" if phase == Phase.ONLINE.value or busy else "Connect"
+        )
+        messages = {
+            Phase.DISCOVERING.value: "Looking up the site…",
+            Phase.CONNECTING.value: "Connecting…",
+            Phase.HANDSHAKING.value: "Signing in…",
+            Phase.STOPPED.value: "Disconnected — needs your attention",
+            Phase.OFFLINE.value: "Not connected",
+        }
+        if phase in messages:
+            self.site_status_label.setText(messages[phase])
+        if phase != Phase.ONLINE.value:
+            self.identity_label.setText("—")
+            self.following_label.setText("—")
+
+    def _on_welcomed(self, session: SessionInfo) -> None:
+        # A callsign is a label, never an identifier (SPEC.md §7.2).
+        self.identity_label.setText(f"{session.identity} at {session.host}")
+        self.site_status_label.setText(
+            f"Connected — reporting every {session.telemetry_interval_ms} ms"
+        )
+        self.site_status_label.setStyleSheet("color: #2e7d32;")
+
+    def _on_site_closed(self, code: int, explanation: str, terminal: bool) -> None:
+        self.site_status_label.setStyleSheet("color: #c62828;" if terminal else "")
+        if terminal:
+            # Never silently drop to a disconnected state with no reason
+            # (docs/PLANNING.md §5).
+            QMessageBox.warning(self, "Disconnected", explanation)
+            self.site_status_label.setText("Disconnected — reconnect manually")
+        else:
+            self.site_status_label.setText(f"{explanation} Reconnecting…")
+
+    def _on_site_failed(self, message: str) -> None:
+        self.site_status_label.setText(message)
+
+    def _on_follow_state(self, following) -> None:
+        """Display only — catnector derives no behaviour from it."""
+        self.following_label.setText(following or "—")
+
+    def _on_set_rig(self, message: dict) -> None:
+        """Executing tunes, with the safety envelope, is M4."""
+        self._site.reject(message, "rejected", "this build cannot apply tunes yet")
 
     # ----------------------------------------------------------------- menu
 

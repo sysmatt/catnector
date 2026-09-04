@@ -35,7 +35,17 @@ dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
     "ruff>=0.6",
+    # The reference mock site, for testing the client against something that
+    # implements the specification rather than against our reading of it.
+    "catnector-protocol",
 ]
+
+[tool.uv.sources]
+# Pinned to the repository rather than an index: the protocol tooling is not
+# published, and catnector depends on it for tests only. Override with a
+# local path when working on both at once:
+#   uv sync --all-groups && uv pip install -e ../catnector-protocol
+catnector-protocol = { git = "https://github.com/sysmatt/catnector-protocol" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/catnector"]
@@ -45,6 +55,7 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "hamlib: needs the rigctl/rigctld binaries; skipped when hamlib is absent",
+    "protocol: needs the catnector-protocol reference mock site",
 ]
 
 [tool.ruff]
