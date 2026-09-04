@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "catnector"
+version = "0.1.0.dev0"
+description = "Let a spotting site stage your ham radio's frequency and mode. Never transmits."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Matt Hoskins, K2TTA" }]
+keywords = ["amateur-radio", "ham-radio", "hamlib", "rigctld", "cat-control"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Topic :: Communications :: Ham Radio",
+]
+dependencies = [
+    "PySide6>=6.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/sysmatt/catnector"
+Protocol = "https://github.com/sysmatt/catnector-protocol"
+
+[project.scripts]
+catnector = "catnector.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/catnector"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "hamlib: needs the rigctl/rigctld binaries; skipped when hamlib is absent",
+]
+
+[tool.ruff]
+line-length = 96
+src = ["src", "tests"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle, pyflakes
+    "I",             # import sorting
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "SIM",           # simplify
+    "RUF",
+]
+
+[tool.ruff.format]
+quote-style = "double"
