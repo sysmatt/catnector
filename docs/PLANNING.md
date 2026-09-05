@@ -400,6 +400,14 @@ So catnector can offer only the baud rates that are legal *for that rig*
 with the correct framing and the rig's default preselected, pick sane
 timeouts, and gray out what the rig cannot do — a better experience than
 WSJT-X, which expects the operator to already know their own baud rate.
+
+**Parsed tolerantly, because operators run hamlib 4.3 through 4.7 and the
+output moves between releases.** Only the essential part of each line is
+required; where a rig's own speeds cannot be read at all, a generic baud list
+is offered rather than an empty one. An operator faced with an empty dropdown
+cannot configure their radio; one faced with a slightly over-generous list
+can. The same reasoning applies to the model list, where releases disagree
+about whether a manufacturer is repeated in the model column.
 `Can get PTT` is also what makes a don't-QSY-mid-transmission guard
 implementable per rig, degrading gracefully where PTT can't be read.
 

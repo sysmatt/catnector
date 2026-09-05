@@ -22,7 +22,16 @@ from .daemon import RIGCTL_EXECUTABLE, find_executable
 # is separated from its version by a single space, and PRM8060's stamp has
 # three parts (``20231002.0.0``) rather than two.
 MODEL_LINE = re.compile(r"^\s*(\d+)\s+(.*?)\s+(\d{6,8}(?:\.\d+)+)\s+(\S+)")
-SERIAL_SPEED = re.compile(r"(\d+)\.\.(\d+)\s+baud,\s*(\S+)(?:,\s*ctrl=(\S+))?")
+# Only the range is required. Hamlib has moved the framing and flow-control
+# parts of this line around between releases, and users run everything from
+# 4.3 to 4.7 — a parser that understands exactly one release's punctuation
+# silently produces an empty baud-rate list, which is worse than a wrong one.
+SERIAL_SPEED = re.compile(r"(\d+)\s*\.\.\s*(\d+)")
+SERIAL_FRAMING = re.compile(r"\b([5-9][NEOMS][12])\b")
+
+#: Offered when a serial rig's speeds cannot be read at all. An empty
+#: dropdown tells the operator nothing; this at least lets them pick.
+STANDARD_BAUD = (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)
 RANGE_HEADER = re.compile(r"^(TX|RX) ranges #\d+", re.IGNORECASE)
 RANGE_LINE = re.compile(r"^\s+(\d+)\s*Hz\s*-\s*(\d+)\s*Hz\s*$")
 
@@ -66,6 +75,9 @@ class RigCaps:
     port_type: str = ""
     serial_speeds: tuple[int, ...] = ()
     serial_framing: str = ""
+    #: True when the speeds below are a generic list, because this hamlib
+    #: did not report the rig's own. Shown to the operator rather than hidden.
+    serial_speeds_fallback: bool = False
     can_set_freq: bool = False
     can_set_mode: bool = False
     can_set_vfo: bool = False
@@ -110,6 +122,13 @@ class RigCaps:
     def needs_device(self) -> bool:
         return self.is_serial
 
+    @property
+    def offered_speeds(self) -> tuple[int, ...]:
+        """Baud rates to show. Never empty for a serial rig."""
+        if self.serial_speeds:
+            return self.serial_speeds
+        return STANDARD_BAUD if self.is_serial else ()
+
 
 def _run(executable: Path, *args: str) -> str:
     try:
@@ -139,6 +158,10 @@ def list_models(executable: str | os.PathLike[str] | None = None) -> list[RigMod
         # Manufacturer and model sit in separate columns; some rows have an
         # empty model (FLRig), leaving the manufacturer standing alone.
         parts = [p for p in re.split(r"\s{2,}", match.group(2).strip()) if p]
+        # Some releases repeat the manufacturer in the model column (FLRig),
+        # others leave it blank. Either way the label reads once.
+        if len(parts) > 1 and parts[1] == parts[0]:
+            parts = parts[:1]
         models.append(
             RigModel(
                 model=int(match.group(1)),
@@ -211,12 +234,10 @@ def dump_caps(model: int, executable: str | os.PathLike[str] | None = None) -> R
     speed_match = SERIAL_SPEED.search(speed_line)
     if speed_match:
         low, high = int(speed_match.group(1)), int(speed_match.group(2))
-        framing = speed_match.group(3)
-        speeds = tuple(
-            s
-            for s in (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400)
-            if low <= s <= high
-        )
+        speeds = tuple(rate for rate in (*STANDARD_BAUD, 230400) if low <= rate <= high)
+    framing_match = SERIAL_FRAMING.search(speed_line)
+    if framing_match:
+        framing = framing_match.group(1)
 
     def yes(key: str) -> bool:
         return raw.get(key, "").strip().upper().startswith("Y")
@@ -233,6 +254,7 @@ def dump_caps(model: int, executable: str | os.PathLike[str] | None = None) -> R
         can_set_vfo=yes("can set vfo"),
         can_get_ptt=yes("can get ptt"),
         can_set_split_freq=yes("can set split freq"),
+        serial_speeds_fallback=not speeds,
         rx_ranges=rx_ranges,
         tx_ranges=tx_ranges,
         raw=raw,

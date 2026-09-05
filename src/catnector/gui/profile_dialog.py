@@ -125,10 +125,12 @@ class ProfileDialog(QDialog):
                 self._caps = None
 
         self.speed.clear()
-        if self._caps and self._caps.serial_speeds:
-            # Only the rates that are legal for *this* radio.
-            self.speed.addItems(str(s) for s in self._caps.serial_speeds)
-            self.speed.setCurrentIndex(self.speed.count() - 1)
+        if self._caps:
+            # Only the rates legal for *this* radio, where hamlib knows them;
+            # a generic list rather than an empty one where it does not.
+            self.speed.addItems(str(rate) for rate in self._caps.offered_speeds)
+            if self.speed.count():
+                self.speed.setCurrentIndex(self.speed.count() - 1)
         self._refresh_fields()
 
     def _refresh_fields(self) -> None:

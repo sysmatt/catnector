@@ -7,6 +7,7 @@ what we believe the protocol to be. It needs no radio, which is the point.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 from types import SimpleNamespace
@@ -20,7 +21,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from catnector.rig import DUMMY_MODEL, NetRigctlBackend, RigctldOptions, RigctldProcess
 
 HAMLIB_PRESENT = shutil.which("rigctld") is not None and shutil.which("rigctl") is not None
-MOCK_SITE = shutil.which("catnector-mock-server")
+
+
+def _reference_site_available() -> bool:
+    """The mock site is run as a module, so importability is the real test."""
+    return importlib.util.find_spec("catnector_protocol.reference") is not None
+
+
+MOCK_SITE = _reference_site_available()
 
 
 def pytest_collection_modifyitems(config, items):
@@ -35,7 +43,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "hamlib" in item.keywords:
                 item.add_marker(skip)
-    if MOCK_SITE is None:
+    if not MOCK_SITE:
         skip = pytest.mark.skip(reason="catnector-protocol reference site is not installed")
         for item in items:
             if "protocol" in item.keywords:
@@ -75,6 +83,7 @@ def mock_site():
     import json
     import socket
     import subprocess
+    import sys
     import time
     import urllib.error
     import urllib.request
@@ -83,24 +92,40 @@ def mock_site():
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
 
+    # Launched as a module rather than through the console-script shim:
+    # the shim is a generated .exe on Windows and was failing to start there,
+    # while `python -m` is the same code path on every platform.
     process = subprocess.Popen(
-        [MOCK_SITE, "--port", str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        [sys.executable, "-m", "catnector_protocol.reference", "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
 
+    def why() -> str:
+        """Whatever the site said before giving up. Without this a startup
+        failure is an opaque timeout, which is what it was on Windows."""
+        if process.stderr is None:
+            return ""
+        try:
+            process.terminate()
+            output = process.stderr.read() or b""
+        except (OSError, ValueError):
+            return ""
+        return output.decode("utf-8", "replace").strip()[-800:]
+
     base = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + 45  # Windows starts slowly
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise RuntimeError("the reference site exited during startup")
+            raise RuntimeError(f"the reference site exited during startup: {why()}")
         try:
             with urllib.request.urlopen(f"{base}/.well-known/catnector", timeout=1) as reply:
                 json.load(reply)
                 break
         except (urllib.error.URLError, OSError, ValueError):
-            time.sleep(0.1)
+            time.sleep(0.2)
     else:
-        process.terminate()
-        raise RuntimeError("the reference site did not start")
+        raise RuntimeError(f"the reference site did not start: {why()}")
 
     try:
         yield SimpleNamespace(port=port, base=base, host=f"127.0.0.1:{port}", process=process)
