@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=catnector
+GenericName=Rig control connector
+Comment=Let a spotting site set your radio's frequency and mode
+Exec=catnector
+Icon=catnector
+Terminal=false
+Categories=HamRadio;Network;Utility;
+Keywords=ham;amateur radio;hamlib;rigctl;CAT;QSY;

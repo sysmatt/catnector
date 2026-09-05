@@ -545,8 +545,23 @@ value is. **Python floor:** `>=3.10` (PySide6 6.11.2 ships `cp310-abi3`).
 **Distribution formats:**
 - **Linux: AppImage** — single file, no install, works across distros, and
   what Linux hams expect from desktop ham software.
-- **Windows:** PyInstaller `.exe`, unsigned for MVP (§9.1).
+- **Windows:** PyInstaller one-file `.exe`, unsigned for MVP (§9.1).
 - **PyPI wheel**, so `pipx install catnector` serves the technical subset.
+
+**hamlib is bundled**, so an operator never installs it. Only `rigctld` and
+`rigctl` are staged into the bundle: PyInstaller's own analysis follows them
+to `libhamlib.so.4` and the rest, placing those at the bundle root under
+their sonames. Staging the libraries as well shipped every one of them twice
+— about 17 MB. A spawned `rigctld` is loaded by the *system* linker, which
+knows nothing about the bundle, so catnector sets `LD_LIBRARY_PATH` (or
+`PATH` on Windows) for it — and only for binaries that are actually ours, so
+a `rigctld` the operator installed keeps the environment they installed it
+into.
+
+`catnector --check-rig` drives a simulated radio through whichever hamlib the
+build will really use. It is the release pipeline's proof that a bundle works
+on a machine with no hamlib installed, and it is also the answer to "is
+catnector broken, or is my cable unplugged?"
 
 **CI:** GitHub Actions matrix over Linux and Windows, PyInstaller, with an
 `--add-binary` step for the bundled `rigctld` (§8.1). No macOS leg for MVP
@@ -759,7 +774,7 @@ and how catnector would participate in a handoff are all TBD.
 | **M2** ✅ | GUI + rig profiles | **Done.** PySide6 shell with rig picker, connect/disconnect and live freq/mode readout; caps-generated profile editor; `rigs.ini` CRUD; built-in Hamlib Dummy profile; reveal-config-folder; serial-permission diagnosis. Rig I/O on a `QThread`, never the GUI thread. 64 tests. **First milestone worth showing another ham.** | no |
 | **M3** ✅ | Site connection | **Done.** Token paste → `.well-known` → WSS connect over Qt's `QWebSocket`, `hello`/`welcome`, heartbeat, close-code policy with the kick modal, `req` refusal, display-only `follow_state`, `sites.ini` at 0600. 96 tests, the site ones run against the reference mock site. | **yes** |
 | **M4** ✅ | Telemetry + control | **Done.** Throttled, change-driven reports carrying freq/mode/passband/rig name/rig health with a read timestamp; inbound `set_rig` through the full §10 envelope — PTT deferral, capability clamp, coalescing, announce-then-show, manual mode, optional operator ranges. 134 tests. **This is the MVP (§11).** | **yes** |
-| **M5** | Packaging | Linux AppImage + Windows `.exe` via Actions, bundled `rigctld` (`--add-binary`), PyPI wheel for `pipx`, install documentation. | no |
+| **M5** ✅ | Packaging | **Done.** PyInstaller spec (one-directory on Linux, one-file on Windows), hamlib bundled with its libraries reachable at runtime, AppImage build script, release workflow across Linux/Windows/wheel, generated icon, `INSTALL.md`, and `catnector --check-rig` — which is what proves a bundle ships working rig control. | no |
 
 PySide6 is declared as a dependency from M0 rather than M2, so that CI
 proves it installs cleanly on both platforms and both Python versions before

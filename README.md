@@ -11,18 +11,22 @@ the air.
 
 ## Status
 
-Pre-alpha. The design is settled and the protocol is finished; the
-application is being built milestone by milestone. See
-[`docs/PLANNING.md`](docs/PLANNING.md) — §15 is the milestone ladder.
+**The MVP is complete.** All six milestones are done: catnector connects to a
+site, reports what your radio is doing, and applies tunes the site pushes —
+through a safety envelope that refuses anything the radio cannot do, waits
+rather than retuning while you transmit, and tells you who moved your radio.
+
+See [`docs/PLANNING.md`](docs/PLANNING.md) — §15 is the milestone ladder, §10
+is the safety envelope. [`INSTALL.md`](INSTALL.md) covers getting it running.
 
 | | | |
 |---|---|---|
 | **M0** | Repo scaffold | ✅ done |
-| **M1** | Rig control layer, headless | next |
-| **M2** | GUI and rig profiles | |
-| **M3** | Site connection | |
-| **M4** | Telemetry and control — **MVP** | |
-| **M5** | Packaging | |
+| **M1** | Rig control layer, headless | ✅ done |
+| **M2** | GUI and rig profiles | ✅ done |
+| **M3** | Site connection | ✅ done |
+| **M4** | Telemetry and control — **MVP** | ✅ done |
+| **M5** | Packaging | ✅ done |
 
 ## How it talks to your radio
 

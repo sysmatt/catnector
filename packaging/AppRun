@@ -1,0 +1,14 @@
+#!/bin/sh
+# AppImage entry point.
+#
+# Resolves the AppDir even when the AppImage is launched through a symlink,
+# then hands over to the PyInstaller bundle. Qt is told to use the bundled
+# platform plugins so a host Qt installation cannot be picked up instead.
+set -eu
+
+HERE="$(dirname "$(readlink -f "$0")")"
+
+export QT_PLUGIN_PATH="${HERE}/usr/lib/catnector/_internal/PySide6/Qt/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="${QT_PLUGIN_PATH}/platforms"
+
+exec "${HERE}/usr/lib/catnector/catnector" "$@"

@@ -19,8 +19,26 @@ from pathlib import Path
 from .errors import RigctldNotFound, RigUnavailable
 from .wire import parse_hamlib_version
 
-#: Where a packaged build keeps its bundled binaries (M5).
-BUNDLED_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "bin"
+
+def bundle_root() -> Path | None:
+    """The root of a frozen bundle, or None when running from source."""
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) if base else None
+
+
+def bundled_dir() -> Path:
+    """Where a packaged build keeps hamlib's binaries.
+
+    PyInstaller sets ``sys._MEIPASS`` to the bundle root (``_internal/`` in a
+    one-directory build), and the spec places hamlib under ``bin/`` there. In
+    a source tree the same layout is honoured if someone drops binaries in,
+    but normally nothing is bundled and the search falls through to PATH.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return Path(base) / "bin"
+    return Path(__file__).resolve().parent / "bin"
+
 
 EXECUTABLE = "rigctld.exe" if os.name == "nt" else "rigctld"
 RIGCTL_EXECUTABLE = "rigctl.exe" if os.name == "nt" else "rigctl"
@@ -41,7 +59,7 @@ def find_executable(name: str, explicit: str | os.PathLike[str] | None = None) -
             return candidate
         raise RigctldNotFound(f"{candidate} does not exist")
 
-    bundled = BUNDLED_DIR / name
+    bundled = bundled_dir() / name
     if bundled.exists():
         return bundled
 
@@ -54,11 +72,44 @@ def find_executable(name: str, explicit: str | os.PathLike[str] | None = None) -
     )
 
 
+def _environment_for(executable: Path) -> dict[str, str]:
+    """Environment for a spawned hamlib binary.
+
+    A bundled `rigctld` is loaded by the *system* linker, which knows nothing
+    about our bundle — so without this it fails with "libhamlib.so.4: cannot
+    open shared object file" on exactly the machine the bundle exists for:
+    one with no hamlib installed.
+
+    Applied only when the binary is one of ours. A `rigctld` the operator
+    installed keeps the environment they installed it into.
+    """
+    environment = dict(os.environ)
+    bundle = bundled_dir()
+    try:
+        inside_bundle = executable.resolve().parent == bundle.resolve()
+    except OSError:
+        inside_bundle = False
+    if not inside_bundle:
+        return environment
+
+    # The libraries live at the bundle root, not beside the executables:
+    # PyInstaller's analysis puts them there, under their sonames.
+    libraries = bundle_root() or bundle
+    variable = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+    existing = environment.get(variable, "")
+    environment[variable] = f"{libraries}{os.pathsep}{existing}" if existing else str(libraries)
+    return environment
+
+
 def hamlib_version(executable: Path) -> tuple[int, int, int] | None:
     """Ask a binary its hamlib version. None if it will not say."""
     try:
         result = subprocess.run(
-            [str(executable), "--version"], capture_output=True, text=True, timeout=15
+            [str(executable), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=_environment_for(executable),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -133,7 +184,10 @@ class RigctldProcess:
         argv = self.options.argv(self.executable, self.port)
         try:
             self._process = subprocess.Popen(
-                argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=_environment_for(self.executable),
             )
         except OSError as exc:
             raise RigUnavailable(f"could not start {self.executable}: {exc}") from exc
