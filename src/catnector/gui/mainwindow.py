@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from ..control import Limits
 from ..paths import config_dir, ensure_config_dir, rigs_path, sites_path
 from ..profiles import (
     DUMMY_PROFILE_NAME,
@@ -31,9 +32,11 @@ from ..profiles import (
     save_profiles,
     with_unique_name,
 )
-from ..rig import RigHealth, RigState, list_models
+from ..rig import RigHealth, RigState, dump_caps, list_models
 from ..site import Phase, SessionInfo, SiteClient, SiteProfile, load_sites, save_sites
+from .controller import TuneController
 from .profile_dialog import ProfileDialog
+from .telemetry import Telemetry
 from .token_dialog import TokenDialog
 from .worker import RigWorker
 
@@ -51,6 +54,10 @@ class MainWindow(QMainWindow):
 
     _connect_requested = Signal(object)
     _disconnect_requested = Signal()
+    # Rig commands cross a thread boundary and must go by signal: calling the
+    # worker directly would touch its socket and timers from the GUI thread.
+    _frequency_requested = Signal(int)
+    _mode_requested = Signal(str, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -74,6 +81,16 @@ class MainWindow(QMainWindow):
         self.site_status_label = QLabel()
         self.identity_label = QLabel("—")
         self.following_label = QLabel("—")
+
+        self.tuning_mode = QComboBox()
+        self.tuning_mode.addItem("Tune automatically", False)
+        self.tuning_mode.addItem("Ask me first", True)
+        self.control_label = QLabel("—")
+        self.control_label.setWordWrap(True)
+        self.accept_button = QPushButton("Tune now")
+        self.decline_button = QPushButton("Ignore")
+        self.accept_button.setVisible(False)
+        self.decline_button.setVisible(False)
 
         self.session_label = QLabel()
         self.rig_label = QLabel()
@@ -99,6 +116,9 @@ class MainWindow(QMainWindow):
         self.add_site_button.clicked.connect(self._add_site)
         self.remove_site_button.clicked.connect(self._remove_site)
         self.site_box.currentIndexChanged.connect(self._site_selected)
+        self.tuning_mode.currentIndexChanged.connect(self._tuning_mode_changed)
+        self.accept_button.clicked.connect(self._control.accept_pending)
+        self.decline_button.clicked.connect(self._control.dismiss_pending)
 
         self.reload_profiles()
         self.reload_sites()
@@ -130,9 +150,15 @@ class MainWindow(QMainWindow):
         site_picker.addWidget(self.add_site_button)
         site_picker.addWidget(self.remove_site_button)
 
+        control_buttons = QHBoxLayout()
+        control_buttons.addWidget(self.control_label, 1)
+        control_buttons.addWidget(self.accept_button)
+        control_buttons.addWidget(self.decline_button)
+
         site_readout = QFormLayout()
         site_readout.addRow("Signed in as", self.identity_label)
         site_readout.addRow("Following", self.following_label)
+        site_readout.addRow("Remote tuning", self.tuning_mode)
         site_readout.addRow("Status", self.site_status_label)
 
         site_box = QGroupBox("Site")
@@ -140,6 +166,7 @@ class MainWindow(QMainWindow):
         site_layout.addLayout(site_picker)
         site_layout.addWidget(self.site_connect_button)
         site_layout.addLayout(site_readout)
+        site_layout.addLayout(control_buttons)
         self._site_group = site_box
 
         readout = QFormLayout()
@@ -189,10 +216,15 @@ class MainWindow(QMainWindow):
 
         self._connect_requested.connect(self._worker.connect_to)
         self._disconnect_requested.connect(self._worker.disconnect_from)
+        self._frequency_requested.connect(self._worker.set_frequency)
+        self._mode_requested.connect(self._worker.set_mode)
         self._worker.connected.connect(self._on_connected)
         self._worker.disconnected.connect(self._on_disconnected)
         self._worker.state_changed.connect(self._on_state)
         self._worker.failed.connect(self._on_failed)
+        # The worker must be destroyed on the thread it lives on, or Qt
+        # complains that its timers are being stopped from another thread.
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
         # The site connection is event-driven and never blocks, so unlike the
@@ -203,7 +235,19 @@ class MainWindow(QMainWindow):
         self._site.closed.connect(self._on_site_closed)
         self._site.failed.connect(self._on_site_failed)
         self._site.follow_state_changed.connect(self._on_follow_state)
-        self._site.set_rig_received.connect(self._on_set_rig)
+
+        # The safety envelope sits between the site and the radio (§10).
+        self._control = TuneController(self)
+        self._site.set_rig_received.connect(self._control.submit)
+        self._control.apply_requested.connect(self._apply_tune)
+        self._control.accepted.connect(self._ack_tune)
+        self._control.refused.connect(self._nack_tune)
+        self._control.announced.connect(self._on_announcement)
+        self._control.pending_changed.connect(self._on_pending_tune)
+
+        self._telemetry = Telemetry(self)
+        self._worker.state_changed.connect(self._telemetry.rig_state_changed)
+        self._telemetry.report_ready.connect(self._site.send)
 
     # -------------------------------------------------------------- profiles
 
@@ -292,6 +336,7 @@ class MainWindow(QMainWindow):
 
     def _on_connected(self, peer) -> None:
         self._site.set_rig_available(True)
+        self._control.limits = Limits(caps=self._caps_for_current_profile())
         self.connect_button.setEnabled(True)
         self.connect_button.setText("Disconnect")
         self.hamlib_label.setText(
@@ -301,6 +346,7 @@ class MainWindow(QMainWindow):
 
     def _on_disconnected(self, reason: str) -> None:
         self._site.set_rig_available(False)
+        self._control.reset()
         self.connect_button.setEnabled(True)
         self.connect_button.setText("Connect")
         self.frequency_label.setText("—")
@@ -308,7 +354,18 @@ class MainWindow(QMainWindow):
         self.hamlib_label.setText("—")
         self._set_status(reason or "Not connected", RigHealth.OFFLINE)
 
+    def _caps_for_current_profile(self):
+        """Frequency limits come from hamlib, per rig, with no radio needed."""
+        profile = self.current_profile
+        if profile is None:
+            return None
+        try:
+            return dump_caps(profile.model, profile.rigctld_path or None)
+        except Exception:
+            return None
+
     def _on_state(self, state: RigState) -> None:
+        self._control.set_rig_state(state)
         self.frequency_label.setText(format_frequency(state.freq_hz))
         mode = state.mode or "—"
         if state.passband_hz:
@@ -428,8 +485,15 @@ class MainWindow(QMainWindow):
         if phase != Phase.ONLINE.value:
             self.identity_label.setText("—")
             self.following_label.setText("—")
+            self._telemetry.stop()
+            self._control.reset()
 
     def _on_welcomed(self, session: SessionInfo) -> None:
+        profile = self.current_profile
+        self._telemetry.configure(
+            session.telemetry_interval_ms, profile.name if profile else ""
+        )
+        self._telemetry.start()
         # A callsign is a label, never an identifier (SPEC.md §7.2).
         self.identity_label.setText(f"{session.identity} at {session.host}")
         self.site_status_label.setText(
@@ -453,10 +517,51 @@ class MainWindow(QMainWindow):
     def _on_follow_state(self, following) -> None:
         """Display only — catnector derives no behaviour from it."""
         self.following_label.setText(following or "—")
+        self._control.following = following
 
-    def _on_set_rig(self, message: dict) -> None:
-        """Executing tunes, with the safety envelope, is M4."""
-        self._site.reject(message, "rejected", "this build cannot apply tunes yet")
+    def _tuning_mode_changed(self) -> None:
+        self._control.manual = bool(self.tuning_mode.currentData())
+        if not self._control.manual:
+            self._control.dismiss_pending()
+
+    def _apply_tune(self, request) -> None:
+        """Reached only after the envelope in §10 has allowed it."""
+        self._frequency_requested.emit(request.freq_hz)
+        if request.mode:
+            self._mode_requested.emit(request.mode, request.passband_hz or 0)
+
+    def _ack_tune(self, message_id: str) -> None:
+        self._site.accept({"id": message_id})
+
+    def _nack_tune(self, message_id: str, reason: str, detail: str) -> None:
+        # A refusal the site can show to whoever pressed the button beats
+        # silence, which would leave them believing the radio moved.
+        self._site.reject({"id": message_id}, reason, detail)
+
+    def _on_announcement(self, text: str, seconds: int) -> None:
+        if not text:
+            self.control_label.setText("—")
+            self.control_label.setStyleSheet("")
+            return
+        if seconds > 0:
+            self.control_label.setText(f"{text} — in {seconds}s")
+            self.control_label.setStyleSheet("color: #c62828; font-weight: bold;")
+        else:
+            self.control_label.setText(text)
+            self.control_label.setStyleSheet("")
+
+    def _on_pending_tune(self, request) -> None:
+        waiting = request is not None
+        self.accept_button.setVisible(waiting)
+        self.decline_button.setVisible(waiting)
+        if waiting:
+            self.control_label.setText(
+                f"{request.source or 'A site'} asks to tune to {request.describe()}"
+            )
+            self.control_label.setStyleSheet("font-weight: bold;")
+        else:
+            self.control_label.setText("—")
+            self.control_label.setStyleSheet("")
 
     # ----------------------------------------------------------------- menu
 
@@ -482,7 +587,12 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:
+        self._site.disconnect_from()
+        self._telemetry.stop()
+        # Queued, so teardown runs on the worker's own thread; quit() is
+        # processed after it, and deleteLater (wired at startup) frees the
+        # worker there too rather than from this thread.
         self._disconnect_requested.emit()
         self._thread.quit()
-        self._thread.wait(3000)
+        self._thread.wait(5000)
         super().closeEvent(event)

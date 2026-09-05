@@ -8,6 +8,8 @@ are tested without Qt.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -161,3 +163,106 @@ def test_a_damaged_token_is_refused_before_it_is_saved(qtbot, window):
     assert ok.isEnabled()
     assert "example.org" in dialog.feedback.text()
     assert dialog.profile().name == "example.org"
+
+
+@pytest.mark.hamlib
+@pytest.mark.protocol
+def test_the_mvp_loop_a_site_tunes_the_radio(qtbot, window, config, mock_site, site_post):
+    """Site -> safety envelope -> rig, and telemetry back the other way.
+
+    This is what catnector exists to do.
+    """
+    from catnector.site import SiteProfile, encode, save_sites
+
+    save_sites(
+        config / "sites.ini",
+        [SiteProfile(name="Reference", token=encode(mock_site.host, "mvp"))],
+    )
+    window.reload_sites()
+
+    with qtbot.waitSignal(window._worker.connected, timeout=20000):
+        window._toggle_connection()
+    with qtbot.waitSignal(window._site.welcomed, timeout=20000):
+        window._toggle_site()
+
+    # The site pushes a tune; the mock blocks until the client answers.
+    result: dict = {}
+
+    def push() -> None:
+        result.update(
+            site_post(
+                mock_site.base,
+                "/mock/set_rig",
+                {"freq": 14195000, "mode": "USB", "source": "Following W1ABC"},
+            )
+        )
+
+    thread = threading.Thread(target=push, daemon=True)
+    thread.start()
+    qtbot.waitUntil(lambda: bool(result), timeout=25000)
+    thread.join(timeout=5)
+
+    assert result["result"]["type"] == "ack"
+    qtbot.waitUntil(lambda: window.frequency_label.text() == "14.195.000 Hz", timeout=15000)
+    qtbot.waitUntil(lambda: "USB" in window.mode_label.text(), timeout=15000)
+    assert "W1ABC" in window.control_label.text()
+
+    # And the rig's new state is reported back up to the site.
+    qtbot.waitUntil(
+        lambda: any(r.get("freq") == 14195000 for r in _reports(mock_site, site_post)),
+        timeout=15000,
+    )
+
+    window._site.disconnect_from()
+
+
+def _reports(mock_site, site_post) -> list[dict]:
+    import json
+    import urllib.request
+
+    with urllib.request.urlopen(f"{mock_site.base}/mock/status", timeout=10) as reply:
+        status = json.load(reply)
+    sessions = status.get("sessions") or []
+    last = [s.get("last_report") for s in sessions if s.get("last_report")]
+    return last
+
+
+@pytest.mark.hamlib
+@pytest.mark.protocol
+def test_manual_mode_makes_a_tune_wait_for_the_operator(
+    qtbot, window, config, mock_site, site_post
+):
+    from catnector.site import SiteProfile, encode, save_sites
+
+    save_sites(
+        config / "sites.ini",
+        [SiteProfile(name="Reference", token=encode(mock_site.host, "manual"))],
+    )
+    window.reload_sites()
+    with qtbot.waitSignal(window._worker.connected, timeout=20000):
+        window._toggle_connection()
+    with qtbot.waitSignal(window._site.welcomed, timeout=20000):
+        window._toggle_site()
+
+    window.tuning_mode.setCurrentIndex(1)  # "Ask me first"
+    assert window._control.manual
+
+    before = window.frequency_label.text()
+    thread = threading.Thread(
+        target=lambda: site_post(
+            mock_site.base, "/mock/set_rig", {"freq": 14195000, "mode": "USB"}
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+    qtbot.waitUntil(lambda: window._control.pending is not None, timeout=20000)
+    assert window.accept_button.isVisibleTo(window)
+    assert window.frequency_label.text() == before, "nothing moves until accepted"
+    assert "asks to tune" in window.control_label.text()
+
+    with qtbot.waitSignal(window._control.apply_requested, timeout=10000):
+        window.accept_button.click()
+    qtbot.waitUntil(lambda: window.frequency_label.text() == "14.195.000 Hz", timeout=15000)
+    thread.join(timeout=5)
+    window._site.disconnect_from()

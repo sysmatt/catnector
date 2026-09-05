@@ -105,6 +105,35 @@ def nack(message_id: str, re: str, reason: str, detail: str = "") -> dict[str, A
     return message
 
 
+def report(
+    message_id: str,
+    *,
+    freq_hz: int | None,
+    mode: str | None,
+    passband_hz: int | None,
+    rig_profile: str,
+    rig_health: str,
+    read_at_ms: int,
+) -> dict[str, Any]:
+    """A telemetry report (SPEC.md §7.3).
+
+    ``ts`` is when the values were *read*, not when they were sent, so a site
+    can show their age rather than implying currency. When the rig is not
+    healthy the last known good values ride along, and may be absent
+    entirely if the radio has never been reached.
+    """
+    message = envelope(
+        "report", message_id, ts=read_at_ms, rig={"profile": rig_profile, "health": rig_health}
+    )
+    if freq_hz is not None:
+        message["freq"] = int(freq_hz)
+    if mode:
+        message["mode"] = mode
+    if passband_hz:
+        message["passband"] = int(passband_hz)
+    return message
+
+
 @dataclass(frozen=True)
 class SessionInfo:
     """What `welcome` told us (SPEC.md §7.2)."""

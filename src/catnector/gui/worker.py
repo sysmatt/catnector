@@ -78,9 +78,13 @@ class RigWorker(QObject):
             self.disconnected.emit(str(exc))
             return
 
+        # Read the rig *before* announcing the connection, so nothing
+        # downstream ever sees "connected" while still holding a default
+        # (offline) state — which would make the safety envelope refuse a
+        # legitimate tune in the gap before the first poll lands.
+        self._poll()
         self.connected.emit(peer)
         self._start_polling()
-        self._poll()
 
     @Slot()
     def disconnect_from(self) -> None:

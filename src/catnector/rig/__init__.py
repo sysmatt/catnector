@@ -8,7 +8,7 @@ in-process. See docs/PLANNING.md §8 for why.
 from __future__ import annotations
 
 from .backend import PeerInfo, RigBackend, RigHealth, RigState
-from .caps import RigCaps, RigModel, dump_caps, list_models
+from .caps import FrequencyRange, RigCaps, RigModel, dump_caps, list_models
 from .daemon import RigctldOptions, RigctldProcess, find_executable, hamlib_version
 from .errors import (
     HamlibTooOld,
@@ -28,6 +28,7 @@ __all__ = [
     "DUMMY_MODEL",
     "HAMLIB_FLOOR",
     "MODES",
+    "FrequencyRange",
     "HamlibTooOld",
     "NetRigctlBackend",
     "PeerInfo",

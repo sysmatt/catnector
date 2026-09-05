@@ -583,10 +583,18 @@ PTT.
 
 ### 10.2 Capability clamp
 
-**Reject any pushed frequency outside the rig's own TX/RX ranges**, as
-reported by `--dump-caps` (§8.3). Free, automatic, per rig, no
-configuration. With §10.6 empty by default, this is the only always-on
-limit — which is the correct default.
+**Reject any pushed frequency outside what the rig can tune**, as reported
+by `--dump-caps` (§8.3). Free, automatic, per rig, no configuration. With
+§10.6 empty by default, this is the only always-on limit — which is the
+correct default.
+
+**Clamped to the RX ranges, not the TX ranges.** Catnector never keys, so
+refusing to *listen* somewhere the radio can physically tune would be
+catnector overreaching into a decision that belongs to the operator. Whether
+a frequency falls inside the rig's transmit ranges is available for display,
+never enforced. Where hamlib reports no ranges at all, no limit is invented.
+Ranges come from `--dump-caps` rather than a live rig's `\dump_state`
+because they must be known at profile-setup time, with no radio attached.
 
 ### 10.3 Inbound rate limiting and coalescing
 
@@ -750,7 +758,7 @@ and how catnector would participate in a handoff are all TBD.
 | **M1** ✅ | Rig layer, headless | **Done.** `RigBackend` + `NetRigctlBackend`, `RigctldProcess` spawn/supervise on an ephemeral port, peer probe (`\chk_vfo`, `\dump_state`, hamlib floor 4.5), model list and `--dump-caps` parsing. 35 tests against `rigctld -m 1`. No GUI. | no |
 | **M2** ✅ | GUI + rig profiles | **Done.** PySide6 shell with rig picker, connect/disconnect and live freq/mode readout; caps-generated profile editor; `rigs.ini` CRUD; built-in Hamlib Dummy profile; reveal-config-folder; serial-permission diagnosis. Rig I/O on a `QThread`, never the GUI thread. 64 tests. **First milestone worth showing another ham.** | no |
 | **M3** ✅ | Site connection | **Done.** Token paste → `.well-known` → WSS connect over Qt's `QWebSocket`, `hello`/`welcome`, heartbeat, close-code policy with the kick modal, `req` refusal, display-only `follow_state`, `sites.ini` at 0600. 96 tests, the site ones run against the reference mock site. | **yes** |
-| **M4** | Telemetry + control | Throttled outbound reports (freq/mode/rig name/status/rig health); inbound `set_rig` with the full §10 safety envelope. **This is the MVP (§11).** | **yes** |
+| **M4** ✅ | Telemetry + control | **Done.** Throttled, change-driven reports carrying freq/mode/passband/rig name/rig health with a read timestamp; inbound `set_rig` through the full §10 envelope — PTT deferral, capability clamp, coalescing, announce-then-show, manual mode, optional operator ranges. 134 tests. **This is the MVP (§11).** | **yes** |
 | **M5** | Packaging | Linux AppImage + Windows `.exe` via Actions, bundled `rigctld` (`--add-binary`), PyPI wheel for `pipx`, install documentation. | no |
 
 PySide6 is declared as a dependency from M0 rather than M2, so that CI
