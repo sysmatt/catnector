@@ -357,7 +357,16 @@ What actually drives the version question:
   discovers which regime it's in. `\dump_state` has also gained fields over
   time.
 
-**Policy: floor at hamlib 4.5, bundle 4.6.x for managed mode.**
+**Policy: floor at hamlib 4.5; release builds bundle 4.7.x.**
+
+**Distributions cannot be relied on to clear that floor.** Ubuntu 22.04 —
+the release runner, chosen because its glibc 2.35 keeps the AppImage working
+on Debian 12 and Ubuntu 22.04 — ships hamlib **4.3.1**, below our own
+minimum. A bundle built from it fails catnector's own `--check-rig`. The
+release workflow therefore **builds hamlib from source** rather than
+installing the distribution package, which keeps the widest glibc reach and a
+current hamlib at the same time. Windows takes the official upstream build,
+pinned to the same version.
 
 **Probe, never assume — in every mode, including the bundled one.** On
 connect, issue `\chk_vfo` and `\dump_state`, adapt command formatting to the

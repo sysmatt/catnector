@@ -10,14 +10,31 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-22.04     # oldest supported glibc wins the most machines
+    env:
+      HAMLIB_VERSION: "4.7.2"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
 
-      # Bundled into the AppImage, so an operator never installs hamlib.
-      - name: Install hamlib
-        run: sudo apt-get update && sudo apt-get install -y libhamlib-utils
+      # Built from source rather than installed from apt. Ubuntu 22.04 ships
+      # hamlib 4.3.1, which is below catnector's own supported floor of 4.5
+      # (docs/PLANNING.md §8.2) — a bundle made from it fails --check-rig.
+      # 22.04 is still the right runner: its glibc 2.35 keeps the AppImage
+      # working on Debian 12 and Ubuntu 22.04, which 24.04 would exclude.
+      - name: Build hamlib ${{ env.HAMLIB_VERSION }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libusb-1.0-0-dev pkg-config
+          curl -fsSL -o hamlib.tar.gz \
+            "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-${HAMLIB_VERSION}.tar.gz"
+          tar xf hamlib.tar.gz
+          cd "hamlib-${HAMLIB_VERSION}"
+          ./configure --prefix=/usr/local --disable-static
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          rigctld --version
 
       - name: Install Qt runtime libraries
         run: sudo apt-get install -y libegl1 libxkbcommon-x11-0 libdbus-1-3 libfuse2
@@ -29,13 +46,16 @@ jobs:
         run: uv run pyinstaller packaging/catnector.spec --noconfirm
 
       # The point of bundling: this must pass with no hamlib on PATH.
+      # The point of bundling: this must pass with no hamlib reachable. A
+      # build machine that has hamlib installed will happily pass a test that
+      # a user's machine fails, so hide it first.
       - name: Verify the bundle ships working rig control
         run: |
-          sudo mv /usr/bin/rigctl /usr/bin/rigctl.hidden
-          sudo mv /usr/bin/rigctld /usr/bin/rigctld.hidden
+          sudo mv /usr/local/bin/rigctl /usr/local/bin/rigctl.hidden
+          sudo mv /usr/local/bin/rigctld /usr/local/bin/rigctld.hidden
           QT_QPA_PLATFORM=offscreen dist/catnector/catnector --check-rig
-          sudo mv /usr/bin/rigctl.hidden /usr/bin/rigctl
-          sudo mv /usr/bin/rigctld.hidden /usr/bin/rigctld
+          sudo mv /usr/local/bin/rigctl.hidden /usr/local/bin/rigctl
+          sudo mv /usr/local/bin/rigctld.hidden /usr/local/bin/rigctld
 
       - name: Build the AppImage
         run: ./packaging/build_appimage.sh
@@ -47,6 +67,8 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    env:
+      HAMLIB_VERSION: "4.7.2"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -55,17 +77,20 @@ jobs:
 
       # Windows has no hamlib package; take the official build and put it on
       # PATH so the spec's collector finds it exactly as it does on Linux.
-      - name: Fetch hamlib
+      # Windows has no hamlib package; take the official build and put it on
+      # PATH so the spec's collector finds it exactly as it does on Linux.
+      - name: Fetch hamlib ${{ env.HAMLIB_VERSION }}
         shell: pwsh
         run: |
-          $version = "4.6.2"
-          $url = "https://github.com/Hamlib/Hamlib/releases/download/$version/hamlib-w64-$version.zip"
+          $url = "https://github.com/Hamlib/Hamlib/releases/download/$env:HAMLIB_VERSION/hamlib-w64-$env:HAMLIB_VERSION.zip"
           Invoke-WebRequest -Uri $url -OutFile hamlib.zip
           Expand-Archive hamlib.zip -DestinationPath hamlib
-          $bin = (Get-ChildItem -Path hamlib -Recurse -Filter rigctld.exe |
-                  Select-Object -First 1).Directory.FullName
-          if (-not $bin) { throw "rigctld.exe not found in the hamlib archive" }
-          echo $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $found = Get-ChildItem -Path hamlib -Recurse -Filter rigctld.exe | Select-Object -First 1
+          if (-not $found) { throw "rigctld.exe not found in the hamlib archive" }
+          # libhamlib-4.dll sits beside the executables; PyInstaller's
+          # analysis follows it from there.
+          Write-Host "hamlib at $($found.Directory.FullName)"
+          $found.Directory.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - run: uv run pytest -q
 
