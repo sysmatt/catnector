@@ -31,6 +31,11 @@ Protocol = "https://github.com/sysmatt/catnector-protocol"
 catnector = "catnector.cli:main"
 
 [dependency-groups]
+# Building the downloadable bundles. Separate from dev because it is only
+# needed to package, and it is a large install.
+packaging = [
+    "pyinstaller>=6.10",
+]
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",

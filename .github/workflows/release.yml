@@ -17,6 +17,13 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
 
+      # Cheap checks first: a missing build tool should cost seconds, not a
+      # hamlib compile and a PyInstaller run.
+      - name: Verify the packaging toolchain
+        run: |
+          uv sync --all-groups --python 3.12
+          uv run pyinstaller --version
+
       # Built from source rather than installed from apt. Ubuntu 22.04 ships
       # hamlib 4.3.1, which is below catnector's own supported floor of 4.5
       # (docs/PLANNING.md §8.2) — a bundle made from it fails --check-rig.
@@ -39,7 +46,6 @@ jobs:
       - name: Install Qt runtime libraries
         run: sudo apt-get install -y libegl1 libxkbcommon-x11-0 libdbus-1-3 libfuse2
 
-      - run: uv sync --all-groups --python 3.12
       - run: uv run pytest -q
 
       - name: Build the bundle
@@ -74,6 +80,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
       - run: uv sync --all-groups --python 3.12
+      - name: Verify the packaging toolchain
+        run: uv run pyinstaller --version
 
       # Windows has no hamlib package; take the official build and put it on
       # PATH so the spec's collector finds it exactly as it does on Linux.

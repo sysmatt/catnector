@@ -16,7 +16,14 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-version="$(python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+# Read with awk rather than Python: CI runners that use setup-uv have no
+# bare `python` on PATH, only `uv run python`, and this script should not
+# need a Python interpreter to find a version string.
+version="$(awk -F'"' '/^\[project\]/{p=1} p && /^version[[:space:]]*=/{print $2; exit}' pyproject.toml)"
+if [ -z "$version" ]; then
+    echo "could not read the version from pyproject.toml" >&2
+    exit 1
+fi
 arch="$(uname -m)"
 appdir="build/catnector.AppDir"
 
