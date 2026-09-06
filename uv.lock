@@ -213,7 +213,7 @@ dev = [
 [[package]]
 name = "catnector-protocol"
 version = "1.0.0.dev0"
-source = { git = "https://github.com/sysmatt/catnector-protocol#964fb9e225b0ba1f4abb4b699b174f19be76538e" }
+source = { git = "https://github.com/sysmatt/catnector-protocol#30fe84d1b7cf8f905700276aa09cbba384eca0dd" }
 dependencies = [
     { name = "aiohttp" },
     { name = "jsonschema" },
