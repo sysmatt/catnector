@@ -99,3 +99,43 @@ def test_the_summary_says_whether_the_ptt_guard_will_apply(qtbot):
     qtbot.addWidget(widget)
     widget.model.setCurrentIndex(widget.model.findData(1035))
     assert "ptt" in widget.summary.text().lower()
+
+
+def test_a_normal_setup_is_a_name_and_a_radio(dialog):
+    """Nobody should need to know what rigctld is to pick their rig.
+
+    docs/PLANNING.md §8.1 puts both secondary connection modes behind an
+    advanced section; the first version of this dialog put all four controls
+    in front of everyone, two of them naming rigctld outright.
+    """
+    assert not dialog.advanced.isChecked()
+    assert not dialog.rigctld_path.isVisibleTo(dialog)
+    assert not dialog.connection.isVisibleTo(dialog)
+    assert dialog.name.isVisibleTo(dialog)
+    assert dialog.model.isVisibleTo(dialog)
+
+
+def test_the_advanced_section_opens_when_a_profile_depends_on_it(qtbot):
+    """Editing must never hide a setting the profile already uses."""
+    attaching = RigProfile(name="Club", model=2, connection=ATTACH, host="10.0.0.5", port=4532)
+    widget = ProfileDialog(attaching, models=MODELS)
+    qtbot.addWidget(widget)
+    assert widget.advanced.isChecked()
+    assert widget.connection.isVisibleTo(widget)
+
+    custom = RigProfile(name="New rig", model=1035, rigctld_path="/opt/hamlib/bin/rigctld")
+    other = ProfileDialog(custom, models=MODELS)
+    qtbot.addWidget(other)
+    assert other.advanced.isChecked()
+
+
+def test_opening_advanced_reveals_the_secondary_modes(dialog):
+    dialog.advanced.setChecked(True)
+    assert dialog.connection.isVisibleTo(dialog)
+    assert dialog.rigctld_path.isVisibleTo(dialog)
+
+
+def test_the_program_field_says_leaving_it_blank_is_correct(dialog):
+    """It is an escape hatch. The placeholder has to say so."""
+    assert "blank" in dialog.rigctld_path.placeholderText().lower()
+    assert dialog.profile().rigctld_path == ""

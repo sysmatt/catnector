@@ -327,7 +327,10 @@ So an flrig user is not a power user needing a special path — they pick
 means "one rig profile per slice" falls out naturally.
 
 Two secondary modes live behind an *advanced* section of the rig profile,
-and most users never see them:
+collapsed by default and opened only when the profile being edited already
+depends on one — so an existing setting is never hidden from the person
+editing it. A normal setup is a name and a radio, and nothing in the visible
+form names `rigctld`. Most users never see either mode:
 
 - **Managed, external binary** — catnector still launches rigctld, but from
   a user-specified path instead of the bundled one. Exists because hamlib

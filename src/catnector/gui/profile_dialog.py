@@ -16,11 +16,13 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QLabel,
     QLineEdit,
     QMessageBox,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..profiles import ATTACH, MANAGED, RigProfile
@@ -70,7 +72,7 @@ class ProfileDialog(QDialog):
         self.port.setSpecialValueText("automatic")
         self.port.setValue(self._profile.port)
         self.rigctld_path = QLineEdit(self._profile.rigctld_path)
-        self.rigctld_path.setPlaceholderText("bundled or found on PATH")
+        self.rigctld_path.setPlaceholderText("leave blank — catnector brings its own")
 
         self.summary = QLabel()
         self.summary.setWordWrap(True)
@@ -78,13 +80,34 @@ class ProfileDialog(QDialog):
         form = QFormLayout()
         form.addRow("Name", self.name)
         form.addRow("Radio", self.model)
-        form.addRow("Connection", self.connection)
         form.addRow("Serial port", self.device)
         form.addRow("Speed", self.speed)
         form.addRow("Host", self.host)
         form.addRow("Port", self.port)
-        form.addRow("rigctld", self.rigctld_path)
         self._form = form
+
+        # Everything hamlib-shaped lives here. A normal setup is a name and a
+        # radio; nobody should have to know what rigctld is to pick their rig
+        # (docs/PLANNING.md §8.1).
+        advanced_form = QFormLayout()
+        advanced_form.addRow("Connection", self.connection)
+        advanced_form.addRow("Rig control program", self.rigctld_path)
+        self._advanced_form = advanced_form
+
+        self._advanced_body = QWidget()
+        self._advanced_body.setLayout(advanced_form)
+
+        self.advanced = QGroupBox("Advanced")
+        self.advanced.setCheckable(True)
+        # Opened only when the profile being edited already depends on it,
+        # so an existing setting is never hidden from the person editing it.
+        self.advanced.setChecked(self._profile.is_attach or bool(self._profile.rigctld_path))
+        self._advanced_body.setVisible(self.advanced.isChecked())
+        self.advanced.toggled.connect(self._advanced_body.setVisible)
+
+        advanced_outer = QVBoxLayout(self.advanced)
+        advanced_outer.setContentsMargins(0, 0, 0, 0)
+        advanced_outer.addWidget(self._advanced_body)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -93,6 +116,7 @@ class ProfileDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(self.summary)
+        layout.addWidget(self.advanced)
         layout.addWidget(buttons)
 
         self.model.currentIndexChanged.connect(self._model_changed)
