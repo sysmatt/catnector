@@ -12,6 +12,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QCompleter,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -45,8 +46,12 @@ class ProfileDialog(QDialog):
 
         self.model = QComboBox()
         self.model.setEditable(True)  # 300+ entries; let people type
-        self.model.completer().setCompletionMode(QComboBox.PopupCompletion)
-        self.model.completer().setFilterMode(Qt.MatchContains)
+        # PopupCompletion and MatchContains belong to QCompleter and Qt
+        # respectively, not to QComboBox.
+        completer = self.model.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
         for entry in models if models is not None else self._load_models():
             self.model.addItem(entry.label, entry.model)
 
